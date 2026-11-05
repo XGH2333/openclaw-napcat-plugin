@@ -10,6 +10,8 @@ import { loadMediaProxyResource, MediaProxyError, mediaProxyTokensMatch } from "
 import { sendNapCatMessage, sendToNapCat } from "./napcatApi.js";
 import { formatNapCatOutgoingText } from "./plainText.js";
 import { resolveNapCatEmojiId, shouldSendNapCatAckReaction } from "./reactions.js";
+import { decideNapCatGroupTrigger } from "./groupTrigger.js";
+import { isNapCatAdmin, isNapCatCurfewActive, resolveNapCatCurfewSettings } from "./curfew.js";
 import {
     beginNapCatGroupReplyContext,
     getNapCatRuntime,
@@ -100,6 +102,16 @@ async function setNapCatPrivateTypingStatus(userId: string, token?: string): Pro
         user_id: userId,
         event_type: 1,
     }, token);
+}
+
+async function sendNapCatCurfewReply(config: any, groupId: string): Promise<void> {
+    const settings = resolveNapCatCurfewSettings(config);
+    if (!settings.replyText) return;
+    const baseUrl = config.url || "http://127.0.0.1:15150";
+    await sendNapCatMessage(`${baseUrl}/send_group_msg`, {
+        group_id: String(groupId),
+        message: settings.replyText,
+    }, String(config.token || "").trim());
 }
 
 function createPrivateTypingStatusController(options: {
@@ -551,6 +563,16 @@ function extractNapCatEvents(body: any): any[] {
     return [];
 }
 
+function isNapCatBotMentioned(botId: string, rawText: string, text: string): boolean {
+    if (!botId) return false;
+    const escapedBotId = botId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mentionSource = rawText || text;
+    return new RegExp(`\\[CQ:at,qq=${escapedBotId}\\]`, "i").test(mentionSource) ||
+        /\[CQ:at,qq=all\]/i.test(mentionSource) ||
+        new RegExp(`@[^\\s]+ \\(${escapedBotId}\\)`, "i").test(text) ||
+        new RegExp(`@${escapedBotId}(?:\\s|$|,)`, "i").test(text);
+}
+
 async function processNapCatEvent(event: any, baseConfig: any, stageImages = stageInboundImages): Promise<void> {
     // Heartbeat / Lifecycle
     if (event.post_type === "meta_event") {
@@ -571,6 +593,7 @@ async function processNapCatEvent(event: any, baseConfig: any, stageImages = sta
         // keep reading through unchanged below and in the deliver callbacks.
         const config = resolveNapCatConversationConfig(baseConfig, conversationId);
         const botId = String(event.self_id || config.selfId || "").trim();
+        const isAdmin = isNapCatAdmin(config, senderId);
         // Safety check: if senderId looks like a name (non-numeric), log warning
         if (!/^\d+$/.test(senderId)) {
             console.warn(`[NapCat] WARNING: user_id is not numeric: ${senderId}`);
@@ -610,47 +633,58 @@ async function processNapCatEvent(event: any, baseConfig: any, stageImages = sta
                 return;
             }
 
-            if (groupMentionOnly) {
-                // Check if bot was mentioned
-                // NapCat sends self_id as the bot's QQ number
-                if (!botId) {
-                    console.log(`[NapCat] Cannot determine bot ID, ignoring group message`);
+            // In mention-only mode there is no meaningful fallback if NapCat did not send the
+            // bot id. Outside that mode unmentioned traffic can still use the probabilistic path.
+            if (groupMentionOnly && !botId) {
+                console.log(`[NapCat] Cannot determine bot ID, ignoring group message`);
+                return;
+            }
+
+            // Detect a mention in both modes. groupMentionOnly controls whether a non-mention may
+            // fall through to probabilistic triggering; it is no longer the only path that checks.
+            wasMentioned = isNapCatBotMentioned(botId, rawText, text);
+
+            // Curfew is group-only: non-admin messages get one configurable sleeping reply and are
+            // otherwise rejected. Administrators may still wake the bot with an @ mention.
+            if (isNapCatCurfewActive(config)) {
+                if (!isAdmin || !wasMentioned) {
+                    if (!isAdmin) {
+                        try {
+                            await sendNapCatCurfewReply(config, groupId);
+                        } catch (err) {
+                            console.warn(`[NapCat] Failed to send curfew reply to group ${groupId}:`, err);
+                        }
+                    }
+                    console.log(`[NapCat] Ignoring group message during curfew (${isAdmin ? "admin did not mention the bot" : "non-admin sender"})`);
                     return;
                 }
+                console.log(`[NapCat] Curfew active, but administrator mentioned the bot; processing message`);
+            }
 
-                // Check for bot mention in raw_message
-                // Support two formats:
-                // 1. CQ code format: [CQ:at,qq={botId}] or [CQ:at,qq=all]
-                // 2. Plain text format: @Nickname (botId) or @botId
-                const mentionPatternCQ = new RegExp(`\\[CQ:at,qq=${botId}\\]`, 'i');
-                const allMentionPatternCQ = /\[CQ:at,qq=all\]/i;
-
-                // Plain text mention patterns: @xxx (123456) or @123456
-                const mentionPatternPlain1 = new RegExp(`@[^\\s]+ \\(${botId}\\)`, 'i');
-                const mentionPatternPlain2 = new RegExp(`@${botId}(?:\\s|$|,)`, 'i');
-
-                const mentionSource = rawText || text;
-                const isMentionedCQ = mentionPatternCQ.test(mentionSource) || allMentionPatternCQ.test(mentionSource);
-                const isMentionedPlain = mentionPatternPlain1.test(text) || mentionPatternPlain2.test(text);
-
-                if (!isMentionedCQ && !isMentionedPlain) {
+            const triggerDecision = decideNapCatGroupTrigger({
+                groupId,
+                mentioned: wasMentioned,
+                mentionOnly: groupMentionOnly,
+                isAdmin,
+                config,
+            });
+            if (!triggerDecision.trigger) {
+                if (triggerDecision.reason === "mention-required") {
                     console.log(`[NapCat] Ignoring group message (bot not mentioned)`);
-                    return;
+                } else if (triggerDecision.reason === "cooldown") {
+                    console.log(`[NapCat] Ignoring group message (random trigger cooldown active)`);
+                } else if (triggerDecision.reason === "probability-miss") {
+                    console.log(`[NapCat] Ignoring group message (random trigger probability missed)`);
+                } else {
+                    console.log(`[NapCat] Ignoring group message`);
                 }
+                return;
+            }
 
-                wasMentioned = true;
+            if (triggerDecision.reason === "mention") {
                 console.log(`[NapCat] Bot mentioned in group, processing message`);
-            } else {
-                // Check for mention anyway to update wasMentioned
-                if (botId) {
-                    const mentionPatternCQ = new RegExp(`\\[CQ:at,qq=${botId}\\]`, 'i');
-                    const allMentionPatternCQ = /\[CQ:at,qq=all\]/i;
-                    const mentionPatternPlain1 = new RegExp(`@[^\\s]+ \\(${botId}\\)`, 'i');
-                    const mentionPatternPlain2 = new RegExp(`@${botId}(?:\\s|$|,)`, 'i');
-                    const mentionSource = rawText || text;
-                    wasMentioned = mentionPatternCQ.test(mentionSource) || allMentionPatternCQ.test(mentionSource) ||
-                                   mentionPatternPlain1.test(text) || mentionPatternPlain2.test(text);
-                }
+            } else if (triggerDecision.reason === "probability") {
+                console.log(`[NapCat] Random group trigger accepted (probability ${triggerDecision.probability})`);
             }
 
             // Strip mentions from text for cleaner processing and command detection

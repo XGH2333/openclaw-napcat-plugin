@@ -381,6 +381,13 @@ export const napcatPlugin = {
                 description: "Only accept messages from these QQ user IDs (empty = accept all)",
                 default: []
             },
+            adminUsers: {
+                type: "array",
+                items: { type: "string" },
+                title: "Administrator QQ IDs",
+                description: "QQ user IDs allowed to bypass the random group trigger rules with an @ mention and to wake the bot during curfew",
+                default: []
+            },
             groupWhitelist: {
                 type: "array",
                 items: { type: "string" },
@@ -391,7 +398,7 @@ export const napcatPlugin = {
             enableGroupMessages: {
                 type: "boolean",
                 title: "Enable Group Messages",
-                description: "When enabled, process group messages (requires mention to trigger)",
+                description: "When enabled, process group messages; mention and probabilistic trigger rules apply",
                 default: false
             },
             streaming_mode: {
@@ -427,8 +434,59 @@ export const napcatPlugin = {
             groupMentionOnly: {
                 type: "boolean",
                 title: "Require Mention in Group",
-                description: "In group chats, only respond when the bot is mentioned (@)",
+                description: "When enabled, only @ messages are eligible; administrator @ mentions bypass random rules while non-admin @ messages use the probability/cooldown path. When disabled, unmentioned messages are eligible too",
                 default: true
+            },
+            groupTriggerProbability: {
+                type: "number",
+                title: "Group Random Trigger Probability",
+                description: "Chance (0-1) used when a group message is eligible for random triggering; non-admin @ messages and unmentioned messages when groupMentionOnly is false use this probability",
+                default: 0.2,
+                minimum: 0,
+                maximum: 1
+            },
+            groupTriggerCooldownMinutes: {
+                type: "number",
+                title: "Group Random Trigger Cooldown (Minutes)",
+                description: "Minimum minutes between successful random group triggers; a failed probability roll does not start the cooldown. Administrator @ messages bypass it when groupMentionAlwaysTriggers is true",
+                default: 10,
+                minimum: 0
+            },
+            groupMentionAlwaysTriggers: {
+                type: "boolean",
+                title: "Admin Mention Always Triggers",
+                description: "When enabled, an administrator @ mention bypasses the random trigger probability and cooldown; non-admin mentions and all messages when disabled use the probability/cooldown path",
+                default: true
+            },
+            curfewEnabled: {
+                type: "boolean",
+                title: "Enable Daily Curfew",
+                description: "Reject group messages during the daily curfew window; non-admins receive the sleeping reply, while administrators can still trigger by @",
+                default: false
+            },
+            curfewStartTime: {
+                type: "string",
+                title: "Curfew Start Time",
+                description: "Daily curfew start time in HH:MM (24-hour clock)",
+                default: "22:00"
+            },
+            curfewEndTime: {
+                type: "string",
+                title: "Curfew End Time",
+                description: "Daily curfew end time in HH:MM; normal handling resumes at this time the next day",
+                default: "08:00"
+            },
+            curfewTimezone: {
+                type: "string",
+                title: "Curfew Timezone",
+                description: "IANA timezone used for curfew times, e.g. Asia/Shanghai; empty uses the host timezone",
+                default: ""
+            },
+            curfewReplyText: {
+                type: "string",
+                title: "Curfew Reply",
+                description: "Message sent to non-admin group senders during curfew; supports emoji or CQ codes",
+                default: "😴"
             },
             enablePrivateTypingStatus: {
                 type: "boolean",

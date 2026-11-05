@@ -74,7 +74,16 @@ openclaw plugins enable napcat
       "enablePrivateTypingStatus": true,
       "enableGroupMessages": true,
       "groupWhitelist": [],
-      "groupMentionOnly": true
+      "adminUsers": [],
+      "groupMentionOnly": true,
+      "groupTriggerProbability": 0.2,
+      "groupTriggerCooldownMinutes": 10,
+      "groupMentionAlwaysTriggers": true,
+      "curfewEnabled": false,
+      "curfewStartTime": "22:00",
+      "curfewEndTime": "08:00",
+      "curfewTimezone": "Asia/Shanghai",
+      "curfewReplyText": "😴"
     }
   },
   "plugins": {
@@ -134,9 +143,13 @@ openclaw gateway restart
 | 配置项 | 类型 | 说明 | 默认值 |
 |---|---|---|---|
 | `allowUsers` | string[] | 只允许这些 QQ 号触发机器人；空数组表示不过滤 | `[]` |
+| `adminUsers` | string[] | 管理员 QQ 号；群聊中管理员 @ 机器人可无视概率和冷却必定触发，宵禁期间也只有管理员 @ 会被处理 | `[]` |
 | `enableGroupMessages` | boolean | 是否处理群消息 | `false` |
 | `groupWhitelist` | string[] | 只允许这些群号触发机器人；空数组表示不过滤群 | `[]` |
-| `groupMentionOnly` | boolean | 群里是否必须 @ 机器人才处理 | `true` |
+| `groupMentionOnly` | boolean | 群里是否必须 @ 才处理；管理员 @ 可无视概率必定触发，非管理员 @ 按概率/冷却判断；关闭后非 @ 消息也参与概率触发 | `true` |
+| `groupTriggerProbability` | number | 群聊参与随机触发时的概率（0-1）；非 @ 消息仅在 `groupMentionOnly=false` 时参与，非管理员 @ 也走该概率逻辑 | `0.2` |
+| `groupTriggerCooldownMinutes` | number | 成功触发后到下一次随机触发之间的最小间隔（分钟）；概率未命中不会开始冷却，其他人可以立即重试 | `10` |
+| `groupMentionAlwaysTriggers` | boolean | 管理员在群聊中 @ 机器人时是否无视概率和冷却必定触发；关闭后管理员 @ 也按概率和冷却判断，非管理员 @ 始终走概率逻辑 | `true` |
 
 ### 消息处理
 
@@ -162,7 +175,9 @@ messages.queue.mode followup`）。默认的 `steer` 会把同一会话里并发
 连接类键（`url`、`token`、`mediaProxy*` 等）不在覆盖范围内，写了会被忽略并打 warning。
 
 可覆盖的键：`groupReplyQuote`、`streaming_mode`、`enable_progress_messages`、
-`plainTextMode`、`groupMentionOnly`、`enablePrivateTypingStatus`、`agentId`。
+`plainTextMode`、`groupMentionOnly`、`groupTriggerProbability`、`groupTriggerCooldownMinutes`、`groupMentionAlwaysTriggers`、
+`adminUsers`、`curfewEnabled`、`curfewStartTime`、`curfewEndTime`、`curfewTimezone`、`curfewReplyText`、
+`enablePrivateTypingStatus`、`agentId`。
 
 ### 媒体代理（跨机器部署）
 
@@ -227,28 +242,56 @@ messages.queue.mode followup`）。默认的 `steer` 会把同一会话里并发
 
 适合：只想做私聊助手。
 
-#### 模式 2：处理群消息，但必须 @ 机器人（推荐）
+#### 模式 2：只处理 @ 消息（管理员必定触发）
 
 ```json
 {
   "enableGroupMessages": true,
   "groupWhitelist": ["123456789"],
-  "groupMentionOnly": true
+  "adminUsers": ["123456789"],
+  "groupMentionOnly": true,
+  "groupTriggerProbability": 0.2,
+  "groupTriggerCooldownMinutes": 10,
+  "groupMentionAlwaysTriggers": true
 }
 ```
 
-适合：大多数群聊场景。
+适合：只想响应 @ 的群聊。管理员 @ 必定触发；非管理员 @ 仍按概率和冷却判断。
 
-#### 模式 3：处理所有群消息（不推荐）
+#### 模式 3：概率触发群消息（推荐替代全群监听）
 
 ```json
 {
   "enableGroupMessages": true,
-  "groupMentionOnly": false
+  "adminUsers": ["123456789", "987654321"],
+  "groupMentionOnly": false,
+  "groupTriggerProbability": 0.2,
+  "groupTriggerCooldownMinutes": 10,
+  "groupMentionAlwaysTriggers": true
 }
 ```
 
-适合：你非常确定需要"全群监听"。
+效果：管理员 @ 机器人时必定触发；非管理员 @ 和普通消息走概率/冷却逻辑。概率未命中不会进入冷却，其他群友可以立即继续尝试；成功触发后才开始 10 分钟冷却。将概率设为 1、冷却设为 0 可恢复旧的"全群监听"行为。
+
+---
+
+### 宵禁
+
+每日宵禁只影响群聊。启用后，在宵禁时间窗口内：
+
+- 非管理员发送任意消息（包括 @）：不进入 OpenClaw，只回复一条 `curfewReplyText`，默认 😴。
+- 管理员发送 @ 消息：正常进入 OpenClaw，并可按配置无视概率和冷却。
+- 管理员发送非 @ 消息：不处理，也不发送睡觉回复。
+- 到达 `curfewEndTime` 后自动恢复正常接收；支持跨午夜窗口，例如 `22:00` 到 `08:00`。
+- 宵禁只影响群聊，私聊不受影响。
+
+| 配置项 | 类型 | 说明 | 默认值 |
+|---|---|---|---|
+| `curfewEnabled` | boolean | 是否启用每日宵禁 | `false` |
+| `curfewStartTime` | string | 宵禁开始时间，24 小时制 `HH:MM` | `22:00` |
+| `curfewEndTime` | string | 宵禁结束时间，24 小时制 `HH:MM` | `08:00` |
+| `curfewTimezone` | string | IANA 时区，例如 `Asia/Shanghai`；留空使用宿主机时区 | `""` |
+| `curfewReplyText` | string | 非管理员宵禁消息收到的回复，支持 Emoji 或 CQ 码；设为空字符串则不回复 | `😴` |
 
 ---
 
@@ -459,7 +502,16 @@ node skill/napcat-qq/scripts/qq-contact-search.js 老王 private
       "allowUsers": ["123456789", "987654321"],
       "enableGroupMessages": true,
       "groupWhitelist": ["123456789", "987654321"],
+      "adminUsers": ["123456789"],
       "groupMentionOnly": true,
+      "groupTriggerProbability": 0.2,
+      "groupTriggerCooldownMinutes": 10,
+      "groupMentionAlwaysTriggers": true,
+      "curfewEnabled": true,
+      "curfewStartTime": "22:00",
+      "curfewEndTime": "08:00",
+      "curfewTimezone": "Asia/Shanghai",
+      "curfewReplyText": "😴",
       "plainTextMode": true,
       "streaming_mode": false,
       "enablePrivateTypingStatus": true,
@@ -499,6 +551,10 @@ node skill/napcat-qq/scripts/qq-contact-search.js 老王 private
 - `enableGroupMessages` 有没有设成 `true`
 - `groupWhitelist` 有没有把当前群拦掉
 - `groupMentionOnly` 是否开启
+- `groupMentionOnly=false` 时，非 @ 消息是否仍在随机触发冷却中，或概率未命中
+- `adminUsers` 是否包含你的 QQ 号；只有管理员 @ 才会无视概率和冷却
+- `groupMentionAlwaysTriggers` 是否为 `false`，导致管理员 @ 也要经过概率判断
+- 当前是否处于宵禁时间；宵禁期间非管理员消息只会收到睡觉表情
 - 你在群里有没有真的 @ 到机器人
 - `allowUsers` 有没有把发消息的人拦掉
 

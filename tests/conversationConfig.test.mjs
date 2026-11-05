@@ -124,6 +124,32 @@ test("editing a file takes effect without a restart", () =>
     assert.equal(resolveNapCatConversationConfig(base, "group:111").groupReplyQuote, false);
   }));
 
+
+test("group trigger rules can be overridden per conversation", () =>
+  withConfigDir(
+    {
+      "default.json": { groupTriggerProbability: 0.5, groupTriggerCooldownMinutes: 3, adminUsers: ["111"], curfewEnabled: true, curfewReplyText: "sleep" },
+      "group-111.json": { groupTriggerProbability: 0.1, groupMentionAlwaysTriggers: false, adminUsers: ["222"], curfewStartTime: "23:30" },
+    },
+    ({ base }) => {
+      const merged = resolveNapCatConversationConfig(base, "group:111");
+      assert.equal(merged.groupTriggerProbability, 0.1);
+      assert.equal(merged.groupTriggerCooldownMinutes, 3);
+      assert.equal(merged.groupMentionAlwaysTriggers, false);
+      assert.deepEqual(merged.adminUsers, ["222"]);
+      assert.equal(merged.curfewEnabled, true);
+      assert.equal(merged.curfewStartTime, "23:30");
+      assert.equal(merged.curfewReplyText, "sleep");
+      const other = resolveNapCatConversationConfig(base, "group:222");
+      assert.equal(other.groupTriggerProbability, 0.5);
+      assert.equal(other.groupTriggerCooldownMinutes, 3);
+      assert.equal(other.groupMentionAlwaysTriggers, undefined);
+      assert.deepEqual(other.adminUsers, ["111"]);
+      assert.equal(other.curfewEnabled, true);
+      assert.equal(other.curfewStartTime, undefined);
+    },
+  ));
+
 test("quote replies are off by default and only an explicit true enables them", () => {
   assert.equal(isNapCatGroupQuoteReplyEnabled({}), false);
   assert.equal(isNapCatGroupQuoteReplyEnabled({ groupReplyQuote: undefined }), false);
