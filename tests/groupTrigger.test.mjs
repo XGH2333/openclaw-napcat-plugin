@@ -71,7 +71,7 @@ test("a probability miss does not start the cooldown and another member can retr
   assert.equal(tooSoon.reason, "cooldown");
 });
 
-test("only an administrator @ bypasses probability and cooldown", () => {
+test("an administrator @ bypasses probability without starting a cooldown", () => {
   resetNapCatGroupTriggerState();
   const config = { groupMentionOnly: false, groupTriggerProbability: 0.2 };
 
@@ -89,12 +89,49 @@ test("only an administrator @ bypasses probability and cooldown", () => {
   assert.equal(adminMention.trigger, true);
   assert.equal(adminMention.reason, "mention");
 
-  const nonAdminMentionDuringCooldown = decideNapCatGroupTrigger({
+  const nonAdminAfterAdminMention = decideNapCatGroupTrigger({
     groupId: "20002", mentioned: true, mentionOnly: false, isAdmin: false, config,
     now: 2_000_002, random: () => 0,
   });
-  assert.equal(nonAdminMentionDuringCooldown.trigger, false);
-  assert.equal(nonAdminMentionDuringCooldown.reason, "cooldown");
+  assert.equal(nonAdminAfterAdminMention.trigger, true);
+  assert.equal(nonAdminAfterAdminMention.reason, "probability");
+
+  const afterSuccessfulRandomTrigger = decideNapCatGroupTrigger({
+    groupId: "20002", mentioned: true, mentionOnly: false, isAdmin: false, config,
+    now: 2_000_003, random: () => 0,
+  });
+  assert.equal(afterSuccessfulRandomTrigger.trigger, false);
+  assert.equal(afterSuccessfulRandomTrigger.reason, "cooldown");
+});
+
+test("an administrator @ does not extend an existing random-trigger cooldown", () => {
+  resetNapCatGroupTriggerState();
+  const config = { groupTriggerProbability: 1, groupTriggerCooldownMinutes: 10 };
+  const started = decideNapCatGroupTrigger({
+    groupId: "250025", mentioned: false, mentionOnly: false, config,
+    now: 2_500_000, random: () => 0,
+  });
+  assert.equal(started.trigger, true);
+
+  const adminMention = decideNapCatGroupTrigger({
+    groupId: "250025", mentioned: true, mentionOnly: false, isAdmin: true, config,
+    now: 2_500_001, random: () => 0.99,
+  });
+  assert.equal(adminMention.trigger, true);
+  assert.equal(adminMention.reason, "mention");
+
+  const stillCoolingDown = decideNapCatGroupTrigger({
+    groupId: "250025", mentioned: false, mentionOnly: false, isAdmin: false, config,
+    now: 2_500_002, random: () => 0,
+  });
+  assert.equal(stillCoolingDown.trigger, false);
+  assert.equal(stillCoolingDown.reason, "cooldown");
+
+  const originalCooldownExpired = decideNapCatGroupTrigger({
+    groupId: "250025", mentioned: false, mentionOnly: false, isAdmin: false, config,
+    now: 2_500_000 + 10 * 60_000, random: () => 0,
+  });
+  assert.equal(originalCooldownExpired.trigger, true);
 });
 
 test("an administrator @ can be made subject to probability and cooldown", () => {

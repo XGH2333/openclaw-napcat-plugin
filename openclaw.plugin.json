@@ -98,14 +98,14 @@
           "groupTriggerCooldownMinutes": {
             "type": "number",
             "title": "Group Random Trigger Cooldown (Minutes)",
-            "description": "Minimum minutes between successful random group triggers; a failed probability roll does not start the cooldown. Administrator @ messages bypass it when groupMentionAlwaysTriggers is true",
+            "description": "Minimum minutes between successful random group triggers; a failed probability roll does not start the cooldown. Administrator @ commands neither start nor extend it",
             "default": 10,
             "minimum": 0
           },
           "groupMentionAlwaysTriggers": {
             "type": "boolean",
             "title": "Admin Mention Always Triggers",
-            "description": "When enabled, an administrator @ mention bypasses the random trigger probability and cooldown; non-admin mentions and all messages when disabled use the probability/cooldown path",
+            "description": "When enabled, an administrator @ mention bypasses the random trigger probability and cooldown without starting or extending the cooldown; non-admin mentions and all messages when disabled use the probability/cooldown path",
             "default": true
           },
           "curfewEnabled": {

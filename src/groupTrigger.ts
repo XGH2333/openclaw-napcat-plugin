@@ -2,9 +2,9 @@
 //
 // The old behaviour was binary: with groupMentionOnly=false every group message was handled.
 // That becomes a random, rate-limited trigger instead: group messages are only considered after
-// a cooldown, and a successful trigger starts the next cooldown. A failed probability roll leaves
-// the group immediately available so another member can try again. An administrator @ bypasses
-// both by default.
+// a cooldown, and a successful random trigger starts the next cooldown. A failed probability roll
+// leaves the group immediately available so another member can try again. An administrator @
+// bypasses both by default without starting or refreshing the random-trigger cooldown.
 
 export type NapCatGroupTriggerSettings = {
   probability: number;
@@ -72,9 +72,9 @@ export function decideNapCatGroupTrigger(params: {
   const groupId = String(params.groupId || "");
 
   // Only administrators get the guaranteed @ path. A non-admin @ intentionally falls through to
-  // the same probability/cooldown rules as an unmentioned message.
+  // the same probability/cooldown rules as an unmentioned message. The admin path deliberately
+  // does not record a trigger time: an @ command neither starts a new cooldown nor extends one.
   if (params.mentioned && params.isAdmin === true && settings.mentionAlwaysTriggers) {
-    rememberTrigger(groupId, now);
     return { ...settings, trigger: true, reason: "mention" };
   }
 
